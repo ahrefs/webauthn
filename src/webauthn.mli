@@ -29,14 +29,16 @@
 (** The type of a webauthn state, containing the [origin]. *)
 type t
 
-(** [create origin] is a webauthn state, or an error if the origin does not
+(** [create ?rpid origin] is a webauthn state, or an error if the origin does not
     meet the specification (schema must be https, the host must be a valid
-    hostname. An optional port is supported: https://example.com:4444 *)
-val create : string -> (t, string) result
+    hostname). An optional port is supported: https://example.com:4444
+    If provided, [rpid] must be a registrable domain suffix of [origin]'s
+    effective domain. *)
+val create : ?rpid:string -> string -> (t, string) result
 
-(** [rpid t] is the relying party ID. Specifically, it is the effective domain
-    of the origin. Using registrable domain suffix as the relying party ID is
-    currently unsupported. *)
+(** [rpid t] is the relying party ID. It will be the effective domain
+    of the origin unless a registrable domain suffix was provided when
+    creating the webauthn state. *)
 val rpid : t -> string
 
 (** The type os json decoding errors: context, message, and data. *)
