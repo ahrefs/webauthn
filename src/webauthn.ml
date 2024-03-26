@@ -258,16 +258,24 @@ let json_assoc thing : Yojson.Safe.t -> ((string * Yojson.Safe.t) list, _) resul
   | `Assoc s -> Ok s
   | json -> Error (`Json_decoding (thing, "non-assoc", Yojson.Safe.to_string json))
 
-let create origin =
+let host_ok ?(name = "origin") h =
+  match Domain_name.of_string h with
+  | Error (`Msg m) -> Error (name ^ " is not a domain name " ^ m ^ "(data: " ^ h ^ ")")
+  | Ok d -> match Domain_name.host d with
+    | Error (`Msg m) ->  Error (name ^ " is not a host name " ^ m ^ "(data: " ^ h ^ ")")
+    | Ok host -> Ok host
+
+let get_valid_domain_suffix ~suffix host =
+  match host_ok ~name:"domain suffix" suffix with
+  | Error _ as err -> err
+  | Ok h ->
+    match Domain_name.is_subdomain ~subdomain:host ~domain:h with
+    | false -> Error ("host " ^ suffix ^ " is not a domain suffix of " ^ Domain_name.to_string host)
+    | true -> Ok h
+
+let create ?rpid origin =
   match String.split_on_char '/' origin with
   | [ "https:" ; "" ; host_port ] ->
-    let host_ok h =
-      match Domain_name.of_string h with
-      | Error (`Msg m) -> Error ("origin is not a domain name " ^ m ^ "(data: " ^ h ^ ")")
-      | Ok d -> match Domain_name.host d with
-        | Error (`Msg m) ->  Error ("origin is not a host name " ^ m ^ "(data: " ^ h ^ ")")
-        | Ok host -> Ok host
-    in
     begin
       match
         match String.split_on_char ':' host_port with
@@ -279,8 +287,14 @@ let create origin =
                       with Failure _ -> Error ("invalid port " ^ port)))
         | _ -> Error ("invalid origin host and port " ^ host_port)
       with
-      | Ok host -> Ok { origin ; rpid = host }
       | Error _ as e -> e
+      | Ok host ->
+      match rpid with
+      | None -> Ok { origin ; rpid = host }
+      | Some rpid ->
+        match get_valid_domain_suffix ~suffix:rpid host with
+        | Error _ as err -> err
+        | Ok rpid -> Ok { origin ; rpid; }
     end
   | _ ->  Error ("invalid origin " ^ origin)
 
