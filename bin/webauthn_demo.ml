@@ -1,5 +1,20 @@
 open Lwt.Infix
 
+let pp_cert =
+  let pp_extensions ppf (oid, data) =
+    let fido_u2f_transport_oid_name = "id-fido-u2f-ce-transports" in
+    if Asn.OID.equal oid Webauthn.fido_u2f_transport_oid then
+      match Webauthn.decode_transport data with
+      | Error `Msg _ ->
+        Fmt.pf ppf "%s invalid-data %a" fido_u2f_transport_oid_name (Ohex.pp_hexdump ()) data
+      | Ok transports ->
+        Fmt.pf ppf "%s %a" fido_u2f_transport_oid_name
+          Fmt.(list ~sep:(any ",") Webauthn.pp_transport) transports
+    else
+      Fmt.pf ppf "unsupported %a: %a" Asn.OID.pp oid (Ohex.pp_hexdump ()) data
+  in
+  X509.Certificate.pp' pp_extensions
+
 let users : (string, string * (Mirage_crypto_ec.P256.Dsa.pub * string * X509.Certificate.t option) list) Hashtbl.t = Hashtbl.create 7
 
 let find_username username =
@@ -9,10 +24,10 @@ let find_username username =
 
 module KhPubHashtbl = Hashtbl.Make(struct
     type t = Webauthn.credential_id * Mirage_crypto_ec.P256.Dsa.pub
-    let cs_of_pub = Mirage_crypto_ec.P256.Dsa.pub_to_cstruct
+    let string_of_pub = Mirage_crypto_ec.P256.Dsa.pub_to_octets
     let equal (kh, pub) (kh', pub') =
-      String.equal kh kh' && Cstruct.equal (cs_of_pub pub) (cs_of_pub pub')
-    let hash (kh, pub) = Hashtbl.hash (kh, Cstruct.to_string (cs_of_pub pub ))
+      String.equal kh kh' && String.equal (string_of_pub pub) (string_of_pub pub')
+    let hash (kh, pub) = Hashtbl.hash (kh, string_of_pub pub )
   end)
 
 let counters = KhPubHashtbl.create 7
@@ -55,18 +70,18 @@ let to_string err = Format.asprintf "%a" Webauthn.pp_error err
 
 let gen_data ?(pad = false) ?alphabet length =
   Base64.encode_string ~pad ?alphabet
-    (Cstruct.to_string (Mirage_crypto_rng.generate length))
+    (Mirage_crypto_rng.generate length)
 
 let add_routes t =
   let main req =
-    let authenticated_as = Dream.session "authenticated_as" req in
+    let authenticated_as = Dream.session_field req "authenticated_as" in
     let flash = Flash_message.get_flash req |> List.map snd in
     Dream.html (Template.overview flash authenticated_as users)
   in
 
   let register req =
     let user =
-      match Dream.session "authenticated_as" req with
+      match Dream.session_field req "authenticated_as" with
       | None -> gen_data ~alphabet:Base64.uri_safe_alphabet 8
       | Some username -> username
     in
@@ -139,8 +154,8 @@ let add_routes t =
               let cert_pem, cert_string, transports =
                 Option.fold ~none:("No certificate", "No certificate", Ok [])
                   ~some:(fun c ->
-                           X509.Certificate.encode_pem c |> Cstruct.to_string,
-                           Fmt.to_to_string X509.Certificate.pp c,
+                           X509.Certificate.encode_pem c,
+                           Fmt.to_to_string pp_cert c,
                            Webauthn.transports_of_cert c)
                   certificate
               in
@@ -153,7 +168,7 @@ let add_routes t =
                 req;
               Dream.json "true"
             in
-            match Dream.session "authenticated_as" req, Hashtbl.find_opt users userid with
+            match Dream.session_field req "authenticated_as", Hashtbl.find_opt users userid with
             | _, None -> registered []
             | Some session_user, Some (username', keys) ->
               if String.equal username session_user && String.equal username username' then begin
@@ -223,7 +238,7 @@ let add_routes t =
                 if check_counter (credential_id, pubkey) sign_count
                 then begin
                   Flash_message.put_flash ""  "Successfully authenticated" req;
-                  Dream.put_session "authenticated_as" username req >>= fun () ->
+                  Dream.set_session_field req "authenticated_as" username >>= fun () ->
                   Dream.json "true"
                 end else begin
                   Logs.warn (fun m -> m "credential %S for user %S: counter not strictly increasing! \

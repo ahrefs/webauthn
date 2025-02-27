@@ -50,7 +50,7 @@ type decoding_error = [
   | `Base64_decoding of string * string * string
   | `CBOR_decoding of string * string * string
   | `Unexpected_CBOR of string * string * CBOR.Simple.t
-  | `Binary_decoding of string * string * Cstruct.t
+  | `Binary_decoding of string * string * string
   | `Attestation_object_decoding of string * string * string
 ]
 
@@ -169,6 +169,14 @@ type transport = [
 
 (** [pp_transport ppf tranport] pretty-prints the [transport] on [ppf]. *)
 val pp_transport : Format.formatter -> transport -> unit
+
+(** [fido_u2f_transport_oid] is the OID 1.3.6.1.4.1.45724.2.1.1 for
+    certificate authenticator transports extensions. *)
+val fido_u2f_transport_oid : Asn.oid
+
+(** [decode_transport data] decodes the [fido_u2f_transport_oid] certificate
+    extension data. *)
+val decode_transport : string -> (transport list, [> `Msg of string ]) result
 
 (** [transports_of_cert certficate] attempts to extract the FIDO U2F
     authenticator transports extension (OID 1.3.6.1.4.1.45724.2.1.1) from the
